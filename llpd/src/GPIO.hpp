@@ -474,7 +474,7 @@ void LLPD::gpio_analog_setup (const GPIO_PORT& port, const GPIO_PIN& pin)
 }
 
 void LLPD::gpio_output_setup (const GPIO_PORT& port, const GPIO_PIN& pin, const GPIO_PUPD& pupd,
-				const GPIO_OUTPUT_TYPE& type, const GPIO_OUTPUT_SPEED& speed, bool alternateFunc)
+				const GPIO_OUTPUT_TYPE& type, const GPIO_OUTPUT_SPEED& speed, bool alternateFunc, int afValue)
 {
 	GPIO_TypeDef* portPtr = PortToPortPtr( port );
 
@@ -550,6 +550,11 @@ void LLPD::gpio_output_setup (const GPIO_PORT& port, const GPIO_PIN& pin, const 
 	{
 		portPtr->OSPEEDR |= speedBit0;
 		portPtr->OSPEEDR |= speedBit1;
+	}
+
+	if ( alternateFunc && afValue != 0 )
+	{
+		LLPD::setup_alt_func_pin( portPtr, static_cast<unsigned int>(pin), afValue );
 	}
 }
 

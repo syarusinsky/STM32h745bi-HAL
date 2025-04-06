@@ -219,6 +219,61 @@ enum class OPAMP_NUM
 	OPAMP_2
 };
 
+enum class FMC_SDRAM_BANK
+{
+	BANK_5 = 0b0,
+	BANK_6 = 0b1
+};
+
+enum class FMC_SDRAM_COL_ADDR_BITS
+{
+	BITS_8  = 0b00,
+	BITS_9  = 0b01,
+	BITS_10 = 0b10,
+	BITS_11 = 0b11
+};
+
+enum class FMC_SDRAM_ROW_ADDR_BITS
+{
+	BITS_11 = 0b00,
+	BITS_12 = 0b01,
+	BITS_13 = 0b10
+};
+
+enum class FMC_SDRAM_DATA_ADDR_BITS
+{
+	BITS_8  = 0b00,
+	BITS_16 = 0b01,
+	BITS_31 = 0b10
+};
+
+enum class FMC_SDRAM_NUM_BANKS
+{
+	BANKS_2 = 0b0,
+	BANKS_4 = 0b1
+};
+
+enum class FMC_SDRAM_CAS_LATENCY
+{
+	CYCLES_1 = 0b01,
+	CYCLES_2 = 0b10,
+	CYCLES_3 = 0b11
+};
+
+enum class FMC_SDRAM_CLOCK_CONFIG
+{
+	DISABLED = 0b00,
+	CYCLES_2 = 0b10,
+	CYCLES_3 = 0b11
+};
+
+enum class FMC_SDRAM_RPIPE_DELAY
+{
+	CYCLES_0 = 0b00,
+	CYCLES_1 = 0b01,
+	CYCLES_2 = 0b10,
+};
+
 constexpr unsigned int D3_SRAM_TIM6_OFFSET_IN_BYTES = sizeof(float) * 3 + sizeof(uint32_t);
 constexpr unsigned int D3_SRAM_ADC_OFFSET_IN_BYTES = D3_SRAM_TIM6_OFFSET_IN_BYTES + ( sizeof(uint32_t) * 32 ) + ( sizeof(ADC_CHANNEL) * 32 );
 constexpr unsigned int D3_SRAM_UNUSED_OFFSET_IN_BYTES = D3_SRAM_TIM6_OFFSET_IN_BYTES + D3_SRAM_ADC_OFFSET_IN_BYTES;
@@ -230,7 +285,7 @@ class LLPD
 		static void rcc_clock_start_max_cpu1 (const unsigned int pll1qPresc = 8); 	// starts M7 core at 480 MHz using PLL and LDO
 												// (needs to be used with below function)
 		static void rcc_clock_start_max_cpu2(); // starts M4 core at 240 MHx using PLL and LDO (needs to be used with above function)
-		static void rcc_start_pll2 (const unsigned int pll2qPresc = 20); // starts the second PLL
+		static void rcc_start_pll2 (const unsigned int pll2rMultiply = 300); // starts the second PLL (pll2rMultiply specifies the MHz)
 
 		// GPIO
 		static void gpio_enable_clock (const GPIO_PORT& port);
@@ -239,7 +294,7 @@ class LLPD
 		static void gpio_analog_setup (const GPIO_PORT& port, const GPIO_PIN& pin);
 		static void gpio_output_setup (const GPIO_PORT& port, const GPIO_PIN& pin, const GPIO_PUPD& pupd,
 						const GPIO_OUTPUT_TYPE& type, const GPIO_OUTPUT_SPEED& speed,
-						bool alternateFunc = false);
+						bool alternateFunc = false, const int afValue = 0);
 		static bool gpio_input_get (const GPIO_PORT& port, const GPIO_PIN& pin);
 		static void gpio_output_set (const GPIO_PORT& port, const GPIO_PIN& pin, bool set);
 		static void gpio_test();
@@ -315,6 +370,18 @@ class LLPD
 		// Op Amp opamp1( v+ = b0, v- = c5, vout = c4 )
 		//        opamp2( v+ = e9, v- = e8, vout = e7 )
 		static void opamp_init (const OPAMP_NUM& opAmpNum);
+
+		// FMC
+		static void fmc_sdram_init (const FMC_SDRAM_BANK& bank, const FMC_SDRAM_COL_ADDR_BITS& colBits,
+						const FMC_SDRAM_ROW_ADDR_BITS& rowBits, const FMC_SDRAM_DATA_ADDR_BITS& dataBits,
+						const FMC_SDRAM_NUM_BANKS& numBanks, const FMC_SDRAM_CLOCK_CONFIG& clkConfig,
+						const FMC_SDRAM_CAS_LATENCY& casLatency, const bool burstRead,
+						const FMC_SDRAM_RPIPE_DELAY& rPipeDelay, const bool writeProtection,
+						const uint8_t tMRD, const uint8_t tXSR, const uint8_t tRAS, const uint8_t tRC,
+						const uint8_t tWR, const uint8_t tRP, const uint8_t tRCD); // timing values are given in cycles
+		static void fmc_sdram_start (const bool startBank1, const bool startBank2, const uint8_t numAutoRefresh,
+						const unsigned int tREFInMilliseconds, const unsigned int numRows,
+						const unsigned int clkRateInMHz, const uint16_t modeRegisterValue);
 
 		// HSEM
 		static bool hsem_try_take (unsigned int semNum);
