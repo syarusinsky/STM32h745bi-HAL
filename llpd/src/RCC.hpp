@@ -213,7 +213,7 @@ void LLPD::rcc_clock_start_max_cpu2()
 	HSEM->C2ICR |= 0b1;
 }
 
-void LLPD::rcc_start_pll2 (const unsigned int pll2rMultiply)
+void LLPD::rcc_start_pll2 (const unsigned int pllMultiply)
 {
 	// disable pll
 	RCC->CR &= ~(RCC_CR_PLL2ON);
@@ -221,28 +221,29 @@ void LLPD::rcc_start_pll2 (const unsigned int pll2rMultiply)
 	// wait until pll is disabled
 	while ( RCC->CR & RCC_CR_PLL2RDY ) {}
 
-	// set prescaler for pll2 (sets it so multiply is by 1MHz)
+	// set prescaler for pll2 (16 MHz / 16 = 1 MHz)
 	RCC->PLLCKSELR &= ~(RCC_PLLCKSELR_DIVM2);
-	RCC->PLLCKSELR |= 16;
+	RCC->PLLCKSELR |= 16 << RCC_PLLCKSELR_DIVM2_Pos;
 
 	// set pll input frequency range
 	RCC->PLLCFGR &= ~(RCC_PLLCFGR_PLL2RGE);
 
-	// enable pll divq2 output
+	// enable pll divr2 output
 	RCC->PLLCFGR |= RCC_PLLCFGR_DIVR2EN;
 
 	// set pll output frequency range
 	RCC->PLLCFGR |= RCC_PLLCFGR_PLL2VCOSEL;
 
+	// set pll fract
+	RCC->PLLCFGR &= ~(RCC_PLLCFGR_PLL2FRACEN);
+
 	// set pll2 divr prescaler value
 	RCC->PLL2DIVR &= ~(RCC_PLL2DIVR_R2);
+	RCC->PLL2DIVR |= 0 << RCC_PLL2DIVR_R2_Pos;
 
-	// set pll multiply
+	// // set pll multiply
 	RCC->PLL2DIVR &= ~(RCC_PLL2DIVR_N2);
-	RCC->PLL2DIVR |= ( (pll2rMultiply - 1) << RCC_PLL2DIVR_N2_Pos );
-
-	// disable pll fract
-	RCC->PLLCFGR &= ~(RCC_PLLCFGR_PLL2FRACEN);
+	RCC->PLL2DIVR |= ( (pllMultiply - 1) << RCC_PLL2DIVR_N2_Pos );
 
 	// enable pll
 	RCC->CR |= RCC_CR_PLL2ON;
@@ -254,4 +255,6 @@ void LLPD::rcc_start_pll2 (const unsigned int pll2rMultiply)
 	// ensure fmc use pll2 divr
 	RCC->D1CCIPR &= ~(RCC_D1CCIPR_FMCSEL);
 	RCC->D1CCIPR |= RCC_D1CCIPR_FMCSEL_1;
+	// enable fmc peripheral clock
+	RCC->AHB3ENR |= RCC_AHB3ENR_FMCEN;
 }
