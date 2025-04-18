@@ -14,7 +14,10 @@ enum class GPIO_PORT
 	E,
 	F,
 	G,
-	H
+	H,
+	I,
+	J,
+	K
 };
 
 enum class GPIO_PIN
@@ -274,6 +277,60 @@ enum class FMC_SDRAM_RPIPE_DELAY
 	CYCLES_2 = 0b10,
 };
 
+enum class LTDC_HSYNC_POL
+{
+	ACTIVE_LOW  = 0,
+	ACTIVE_HIGH = 1
+};
+
+enum class LTDC_VSYNC_POL
+{
+	ACTIVE_LOW  = 0,
+	ACTIVE_HIGH = 1
+};
+
+enum class LTDC_DE_POL
+{
+	ACTIVE_LOW  = 0,
+	ACTIVE_HIGH = 1
+};
+
+enum class LTDC_PCLK_POL
+{
+	ACTIVE_LOW  = 0,
+	ACTIVE_HIGH = 1
+};
+
+enum class LTDC_LAYER
+{
+	LAYER_0,
+	LAYER_1
+};
+
+enum class LTDC_PIXEL_FORMAT
+{
+	ARGB8888 = 0b000,
+	RGB888   = 0b001,
+	RGB565   = 0b010,
+	ARGB1555 = 0b011,
+	ARGB4444 = 0b100,
+	L8       = 0b101,
+	AL44     = 0b110,
+	AL88     = 0b111
+};
+
+enum class LTDC_BLEND_FACTOR1
+{
+	CONSTANT_ALPHA               = 0b100,
+	PIXEL_ALPHA_X_CONSTANT_ALPHA = 0b110,
+};
+
+enum class LTDC_BLEND_FACTOR2
+{
+	ONE_MINUS_CONSTANT_ALPHA               = 0b101,
+	ONE_MINUS_PIXEL_ALPHA_X_CONSTANT_ALPHA = 0b111,
+};
+
 constexpr unsigned int D3_SRAM_TIM6_OFFSET_IN_BYTES = sizeof(float) * 3 + sizeof(uint32_t);
 constexpr unsigned int D3_SRAM_ADC_OFFSET_IN_BYTES = D3_SRAM_TIM6_OFFSET_IN_BYTES + ( sizeof(uint32_t) * 32 ) + ( sizeof(ADC_CHANNEL) * 32 );
 constexpr unsigned int D3_SRAM_UNUSED_OFFSET_IN_BYTES = D3_SRAM_TIM6_OFFSET_IN_BYTES + D3_SRAM_ADC_OFFSET_IN_BYTES;
@@ -286,6 +343,7 @@ class LLPD
 												// (needs to be used with below function)
 		static void rcc_clock_start_max_cpu2(); // starts M4 core at 240 MHx using PLL and LDO (needs to be used with above function)
 		static void rcc_start_pll2 (const unsigned int pllMultiply = 150); // the output of pll2 divr2 will be pllMultiply * 1 MHz
+		static void rcc_start_pll3 (const unsigned int pllMultiply = 150); // the output of pll3 divr3 will be pllMultiply * 1 MHz / 5
 
 		// GPIO
 		static void gpio_enable_clock (const GPIO_PORT& port);
@@ -382,6 +440,21 @@ class LLPD
 		static void fmc_sdram_start (const bool startBank1, const bool startBank2, const uint8_t numAutoRefresh,
 						const unsigned int tREFInMilliseconds, const unsigned int numRows,
 						const unsigned int clkRateInMHz, const uint16_t modeRegisterValue);
+
+		// LTDC
+		static void ltdc_init (const unsigned int hSyncWidth, const unsigned int hBackPorch, const unsigned int hFrontPorch,
+					const unsigned int hWidth, const unsigned int vSyncHeight, const unsigned int vBackPorch,
+					const unsigned int vFrontPorch, const unsigned int vHeight, const LTDC_HSYNC_POL& hSyncPol,
+					const LTDC_VSYNC_POL& vSyncPol, const LTDC_DE_POL& dePol, const LTDC_PCLK_POL& pClkPol,
+					const uint8_t bgR, const uint8_t bgG, const uint8_t bgB);
+		static void ltdc_layer_init (const LTDC_LAYER& layer, const unsigned int hStart, const unsigned int hStop, const unsigned int vStart,
+						const unsigned int vStop, const LTDC_PIXEL_FORMAT& pixelFormat, const uint8_t alphaBlendingConst,
+						const uint8_t defaultAlphaVal, const LTDC_BLEND_FACTOR1& blendFactor1,
+						const LTDC_BLEND_FACTOR2& blendFactor2, const uint32_t fbStartAddress, const uint32_t fbLineLength,
+						const uint32_t fbNumLines, const uint8_t bgR, const uint8_t bgG, const uint8_t bgB);
+		static void ltdc_start();
+		static void ltdc_layer_enable (const LTDC_LAYER& layer);
+		static void ltdc_layer_disable (const LTDC_LAYER& layer);
 
 		// HSEM
 		static bool hsem_try_take (unsigned int semNum);

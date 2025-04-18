@@ -27,6 +27,15 @@ static inline GPIO_TypeDef* PortToPortPtr (const GPIO_PORT& port)
 
 		case GPIO_PORT::H:
 			return GPIOH;
+
+		case GPIO_PORT::I:
+			return GPIOI;
+
+		case GPIO_PORT::J:
+			return GPIOJ;
+
+		case GPIO_PORT::K:
+			return GPIOK;
 	}
 
 	return nullptr;
@@ -408,6 +417,18 @@ void LLPD::gpio_enable_clock (const GPIO_PORT& port)
 			break;
 		case GPIO_PORT::H:
 			portClockVal = RCC_AHB4ENR_GPIOHEN;
+
+			break;
+		case GPIO_PORT::I:
+			portClockVal = RCC_AHB4ENR_GPIOIEN;
+
+			break;
+		case GPIO_PORT::J:
+			portClockVal = RCC_AHB4ENR_GPIOJEN;
+
+			break;
+		case GPIO_PORT::K:
+			portClockVal = RCC_AHB4ENR_GPIOKEN;
 
 			break;
 		default:

@@ -33,6 +33,7 @@ void LLPD::setup_alt_func_pin (GPIO_TypeDef* gpioPtr, int pinNum, const int afVa
 #include "USART.hpp"
 #include "OpAmp.hpp"
 #include "FMC.hpp"
+#include "LTDC.hpp"
 #include "HSEM.hpp"
 
 // this function is called in system_stm32h7xx.c and can be used to ensure certain things are done on reset

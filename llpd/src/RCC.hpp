@@ -258,3 +258,46 @@ void LLPD::rcc_start_pll2 (const unsigned int pllMultiply)
 	// enable fmc peripheral clock
 	RCC->AHB3ENR |= RCC_AHB3ENR_FMCEN;
 }
+
+void LLPD::rcc_start_pll3 (const unsigned int pllMultiply)
+{
+	// disable pll
+	RCC->CR &= ~(RCC_CR_PLL3ON);
+
+	// wait until pll is disabled
+	while ( RCC->CR & RCC_CR_PLL3RDY ) {}
+
+	// set prescaler for pll3 (16 MHz / 16 = 1 MHz)
+	RCC->PLLCKSELR &= ~(RCC_PLLCKSELR_DIVM3);
+	RCC->PLLCKSELR |= 16 << RCC_PLLCKSELR_DIVM3_Pos;
+
+	// set pll input frequency range
+	RCC->PLLCFGR &= ~(RCC_PLLCFGR_PLL3RGE);
+
+	// enable pll divr3 output
+	RCC->PLLCFGR |= RCC_PLLCFGR_DIVR3EN;
+
+	// set pll output frequency range
+	RCC->PLLCFGR |= RCC_PLLCFGR_PLL3VCOSEL;
+
+	// set pll fract
+	RCC->PLLCFGR &= ~(RCC_PLLCFGR_PLL3FRACEN);
+
+	// set pll3 divr prescaler value
+	RCC->PLL3DIVR &= ~(RCC_PLL3DIVR_R3);
+	RCC->PLL3DIVR |= (5 - 1) << RCC_PLL3DIVR_R3_Pos;
+
+	// // set pll multiply
+	RCC->PLL3DIVR &= ~(RCC_PLL3DIVR_N3);
+	RCC->PLL3DIVR |= ( (pllMultiply - 1) << RCC_PLL3DIVR_N3_Pos );
+
+	// enable pll
+	RCC->CR |= RCC_CR_PLL3ON;
+
+	// wait until pll is ready
+	while ( ! (RCC_CR_PLL3RDY) ) {}
+
+	// TODO maybe move this somewhere else
+	// enable ltdc peripheral clock
+	RCC->APB3ENR |= RCC_APB3ENR_LTDCEN;
+}
