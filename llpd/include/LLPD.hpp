@@ -303,8 +303,8 @@ enum class LTDC_PCLK_POL
 
 enum class LTDC_LAYER
 {
-	LAYER_0,
-	LAYER_1
+	LAYER_1,
+	LAYER_2
 };
 
 enum class LTDC_PIXEL_FORMAT
