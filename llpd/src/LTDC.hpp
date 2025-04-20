@@ -5,7 +5,7 @@ void LLPD::ltdc_init (const unsigned int hSyncWidth, const unsigned int hBackPor
 			const LTDC_HSYNC_POL& hSyncPol, const LTDC_VSYNC_POL& vSyncPol, const LTDC_DE_POL& dePol, const LTDC_PCLK_POL& pClkPol,
 			const uint8_t bgR, const uint8_t bgG, const uint8_t bgB)
 {
-	tempRegVal = LTDC->GCR;
+	uint32_t tempRegVal = LTDC->GCR;
 
 	// set global control (ignoring dither for now, but may be interesting to explore in the future)
 	tempRegVal |= ( static_cast<uint32_t>(pClkPol) << LTDC_GCR_PCPOL_Pos )
@@ -64,13 +64,13 @@ void LLPD::ltdc_layer_init (const LTDC_LAYER& layer, const unsigned int hStart, 
 
 	// set window horizontal start/stop position
 	tempRegVal |= ( (hStart + ((LTDC->BPCR & LTDC_BPCR_AHBP) >> LTDC_BPCR_AHBP_Pos) + 1) << LTDC_LxWHPCR_WHSTPOS_Pos )
-			|  ( (hStart + ((LTDC->BPCR & LTDC_BPCR_AHBP) >> LTDC_BPCR_AHBP_Pos) + 1 + hStop) << LTDC_LxWHPCR_WHSPPOS_Pos );
+			|  ( (((LTDC->AWCR & LTDC_AWCR_AAW) >> LTDC_AWCR_AAW_Pos) - (fbLineLength - hStop)) << LTDC_LxWHPCR_WHSPPOS_Pos );
 	layerPtr->WHPCR = tempRegVal;
 
 	// set window vertical start/stop position
 	tempRegVal = 0;
 	tempRegVal |= ( (vStart + ((LTDC->BPCR & LTDC_BPCR_AVBP) >> LTDC_BPCR_AVBP_Pos) + 1) << LTDC_LxWVPCR_WVSTPOS_Pos )
-			|  ( (vStart + ((LTDC->BPCR & LTDC_BPCR_AVBP) >> LTDC_BPCR_AVBP_Pos) + 1 + vStop) << LTDC_LxWVPCR_WVSPPOS_Pos );
+			|  ( (((LTDC->AWCR & LTDC_AWCR_AAH) >> LTDC_AWCR_AAH_Pos) - (fbNumLines - vStop)) << LTDC_LxWVPCR_WVSPPOS_Pos );
 	layerPtr->WVPCR = tempRegVal;
 
 	// set pixel format
