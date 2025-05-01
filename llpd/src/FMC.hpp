@@ -78,34 +78,29 @@ void LLPD::fmc_sdram_start (const bool startBank1, const bool startBank2, const 
 	}
 
 	// enable clock
-	uint32_t modeReg = FMC_Bank5_6_R->SDCMR;
-	modeReg &= ~(FMC_SDCMR_MODE) & ~(FMC_SDCMR_CTB1) & ~(FMC_SDCMR_CTB2);
-	modeReg |= bankSelection | FMC_SDCMR_MODE_0 | ( (12 - 1) << FMC_SDCMR_NRFS_Pos );
+	uint32_t modeReg = 0;
+	modeReg |= bankSelection | ( 0b001 << FMC_SDCMR_MODE_Pos );
 	FMC_Bank5_6_R->SDCMR = modeReg;
 
-	// delay for at least 100us (we just delay for 1ms to be safe)
-	LLPD::tim6_delay( 1000 );
+	// delay for at least 100us (we just delay for 150us to be safe)
+	LLPD::tim6_delay( 150 );
 
 	// send precharge all command
-	modeReg = FMC_Bank5_6_R->SDCMR;
-	modeReg &= ~(FMC_SDCMR_MODE) & ~(FMC_SDCMR_CTB1) & ~(FMC_SDCMR_CTB2);
-	modeReg |= bankSelection | FMC_SDCMR_MODE_1;
+	modeReg = 0;
+	modeReg |= bankSelection | ( 0b010 << FMC_SDCMR_MODE_Pos );
 	FMC_Bank5_6_R->SDCMR = modeReg;
 
 	// send autorefresh commands
-	modeReg = FMC_Bank5_6_R->SDCMR;
-	modeReg &= ~(FMC_SDCMR_MODE) & ~(FMC_SDCMR_CTB1) & ~(FMC_SDCMR_CTB2) & ~(FMC_SDCMR_NRFS);
-	modeReg |= bankSelection | FMC_SDCMR_MODE_1 |FMC_SDCMR_MODE_0 | ( (numAutoRefresh - 1) << FMC_SDCMR_NRFS_Pos );
+	modeReg = 0;
+	modeReg |= bankSelection | ( 0b011 << FMC_SDCMR_MODE_Pos ) | ( (numAutoRefresh - 1) << FMC_SDCMR_NRFS_Pos );
 	FMC_Bank5_6_R->SDCMR = modeReg;
 
 	// set mode register
-	modeReg = FMC_Bank5_6_R->SDCMR;
-	modeReg &= ~(FMC_SDCMR_MODE) & ~(FMC_SDCMR_CTB1) & ~(FMC_SDCMR_CTB2) & ~(FMC_SDCMR_MRD);
-	modeReg |= bankSelection | FMC_SDCMR_MODE_2 | ( modeRegisterVal << FMC_SDCMR_MRD_Pos );
+	modeReg = 0;
+	modeReg |= bankSelection | ( 0b100 << FMC_SDCMR_MODE_Pos ) | ( modeRegisterVal << FMC_SDCMR_MRD_Pos );
 	FMC_Bank5_6_R->SDCMR = modeReg;
 
 	// set refresh rate counter
 	unsigned int refreshRate = ( (static_cast<float>(tREFInMilliseconds * 1000) / static_cast<float>(numRows)) * clkRateInMHz ) - 20.0f;
-	FMC_Bank5_6_R->SDRTR &= FMC_SDRTR_COUNT;
-	FMC_Bank5_6_R->SDRTR |= refreshRate << FMC_SDRTR_COUNT_Pos;
+	FMC_Bank5_6_R->SDRTR = refreshRate << FMC_SDRTR_COUNT_Pos;
 }
