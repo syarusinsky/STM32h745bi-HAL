@@ -141,7 +141,7 @@ void LLPD::ltdc_layer_init (const LTDC_LAYER& layer, const unsigned int hStart, 
 	layerPtr->CFBLNR = tempRegVal;
 }
 
-void LLPD::ltdc_start()
+void LLPD::ltdc_immediate_reload()
 {
 	// set immediate reload in SRCR
 	LTDC->SRCR |= LTDC_SRCR_IMR;
@@ -177,4 +177,23 @@ void LLPD::ltdc_layer_disable (const LTDC_LAYER& layer)
 
 	// disable layer
 	layerPtr->CR &= ~(LTDC_LxCR_LEN);
+}
+
+void LLPD::ltdc_layer_set_fb_addr (const LTDC_LAYER& layer, uint32_t fbStartAddress)
+{
+	LTDC_Layer_TypeDef* layerPtr = nullptr;
+	if ( layer == LTDC_LAYER::LAYER_1 )
+	{
+		layerPtr = LTDC_Layer1;
+	}
+	else if ( layer == LTDC_LAYER::LAYER_2 )
+	{
+		layerPtr = LTDC_Layer2;
+	}
+
+	// set frame buffer start address
+	layerPtr->CFBAR = fbStartAddress;
+
+	// set vertical blanking reload in SRCR
+	LTDC->SRCR = LTDC_SRCR_VBR;
 }

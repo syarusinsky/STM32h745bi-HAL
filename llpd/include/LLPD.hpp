@@ -452,9 +452,10 @@ class LLPD
 						const uint8_t defaultAlphaVal, const LTDC_BLEND_FACTOR1& blendFactor1,
 						const LTDC_BLEND_FACTOR2& blendFactor2, const uint32_t fbStartAddress, const uint32_t fbLineLength,
 						const uint32_t fbNumLines, const uint8_t bgR, const uint8_t bgG, const uint8_t bgB);
-		static void ltdc_start();
+		static void ltdc_immediate_reload(); // needed to actually start ltdc after setup
 		static void ltdc_layer_enable (const LTDC_LAYER& layer);
 		static void ltdc_layer_disable (const LTDC_LAYER& layer);
+		static void ltdc_layer_set_fb_addr (const LTDC_LAYER& layer, uint32_t fbStartAddress); // actual change happens on vertical blanking
 
 		// HSEM
 		static bool hsem_try_take (unsigned int semNum);
