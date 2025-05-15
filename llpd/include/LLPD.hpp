@@ -387,6 +387,7 @@ class LLPD
 		static void tim6_delay (uint32_t microseconds); // delay function may not be 100% accurate
 		static bool tim6_isr_handle_delay(); 	// To use delay functions, this function needs to be in the tim6 isr.
 							// It will return true if a delay is not finished, or false if it is.
+		static float tim6_get_usecond_incr(); // returns how many microseconds pass per interrupt
 
 		// SPI spi1( sck =  a5, miso =  a6, mosi =  a7 )
 		//     spi2( sck = b13, miso = b14, mosi = b15 )

@@ -123,3 +123,8 @@ bool LLPD::tim6_isr_handle_delay()
 
 	return false;
 }
+
+float LLPD::tim6_get_usecond_incr()
+{
+	return *tim6USecondIncr;
+}
