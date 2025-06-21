@@ -255,6 +255,9 @@ void LLPD::rcc_start_pll2 (const unsigned int pllMultiply)
 	// ensure fmc use pll2 divr
 	RCC->D1CCIPR &= ~(RCC_D1CCIPR_FMCSEL);
 	RCC->D1CCIPR |= RCC_D1CCIPR_FMCSEL_1;
+	// ensure sdmmc1 use pll2 divr
+	RCC->D1CCIPR &= ~(RCC_D1CCIPR_SDMMCSEL);
+	RCC->D1CCIPR |= RCC_D1CCIPR_SDMMCSEL;
 	// enable fmc peripheral clock
 	RCC->AHB3ENR |= RCC_AHB3ENR_FMCEN;
 }

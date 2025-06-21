@@ -331,6 +331,24 @@ enum class LTDC_BLEND_FACTOR2
 	ONE_MINUS_PIXEL_ALPHA_X_CONSTANT_ALPHA = 0b111,
 };
 
+enum class SDMMC_DIRPOL
+{
+	LOW  = 0,
+	HIGH = 1
+};
+
+enum class SDMMC_BUS_WIDTH
+{
+	BITS_1 = 0b00,
+	BITS_4 = 0b01
+};
+
+enum class SDMMC_CLK_EDGE
+{
+	RISING  = 0b0,
+	FALLING = 0b1
+};
+
 constexpr unsigned int D3_SRAM_TIM6_OFFSET_IN_BYTES = sizeof(float) * 3 + sizeof(uint32_t);
 constexpr unsigned int D3_SRAM_ADC_OFFSET_IN_BYTES = D3_SRAM_TIM6_OFFSET_IN_BYTES + ( sizeof(uint32_t) * 32 ) + ( sizeof(ADC_CHANNEL) * 32 );
 constexpr unsigned int D3_SRAM_UNUSED_OFFSET_IN_BYTES = D3_SRAM_TIM6_OFFSET_IN_BYTES + D3_SRAM_ADC_OFFSET_IN_BYTES;
@@ -457,6 +475,11 @@ class LLPD
 		static void ltdc_layer_enable (const LTDC_LAYER& layer);
 		static void ltdc_layer_disable (const LTDC_LAYER& layer);
 		static void ltdc_layer_set_fb_addr (const LTDC_LAYER& layer, uint32_t fbStartAddress); // actual change happens on vertical blanking
+
+		// SDMMC (SDMMC1, d0 = c8, d1 = c9, d2 = c10, d3 = c11, clk = c12, cmd = d2)
+		static void sdmmc_init (const GPIO_PORT& cardDetectPort, const GPIO_PIN& cardDetectPin, const unsigned int pll2rClkRate,
+					const unsigned int targetSDMMCClkRate, const SDMMC_DIRPOL& dirPol, const SDMMC_BUS_WIDTH& busWidth,
+					const bool hardwareFlowCtrl, const bool powerSave, const SDMMC_CLK_EDGE& clkEdge );
 
 		// HSEM
 		static bool hsem_try_take (unsigned int semNum);
