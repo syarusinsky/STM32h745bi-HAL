@@ -1,23 +1,29 @@
 #include "LLPD.hpp"
 
 // commands
-#define SDMMC_CMD_GO_IDLE_STATE 0
-#define SDMMC_CMD_SEND_OP_COND 1
-#define SDMMC_CMD_SEND_IF_COND 8
-#define SDMMC_CMD_APP_CMD 55
-#define SDMMC_ACMD_SD_SEND_OP_COND 41
+static constexpr uint32_t SDMMC_CMD_GO_IDLE_STATE = 0;
+static constexpr uint32_t SDMMC_CMD_SEND_OP_COND = 1;
+static constexpr uint32_t SDMMC_CMD_SEND_IF_COND = 8;
+static constexpr uint32_t SDMMC_CMD_APP_CMD = 55;
+static constexpr uint32_t SDMMC_ACMD_SD_SEND_OP_COND = 41;
 
 // wait response values
-#define SDMMC_CMD_SHORT_RESPONSE 0b01
+static constexpr uint32_t SDMMC_CMD_SHORT_RESPONSE = 0b01;
 
 // acmd41 queries
-#define SDMMC_ACMD41_HIGH_CAPACITY 0x40000000
+static constexpr uint32_t SDMMC_ACMD41_BUSY = 0x80000000;
+static constexpr uint32_t SDMMC_ACMD41_VOLTAGE_WINDOW = 0x100000; // 3.2V - 3.3V
+static constexpr uint32_t SDMMC_ACMD41_HIGH_CAPACITY = 0x40000000;
 
 // r1 response masks
-#define SDMMC_R1_IDLE_STATE 0b00000001
+static constexpr uint32_t SDMMC_R1_IDLE_STATE = 0b00000001;
 
-static GPIO_PORT cDPort = GPIO_PORT::A;
-static GPIO_PIN cDPin = GPIO_PIN::PIN_4;
+static constexpr GPIO_PORT cDPort = GPIO_PORT::A;
+static constexpr GPIO_PIN cDPin = GPIO_PIN::PIN_4;
+
+static constexpr uint32_t TIMEOUT_MAX = 100000;
+
+static bool isVersion2Card = true;
 
 static void sendCommand (const uint32_t arg, const uint32_t cmdIndex, const uint32_t response = 0, const bool waitForInterrupt = false,
 				const bool waitPend = false, const bool cpsmEnable = true, const bool cmdSuspend = false)
@@ -43,20 +49,28 @@ static void clearFlags()
 
 static void waitForCmdSentAndClearFlags()
 {
-	while ( ! (SDMMC1->STA & SDMMC_STA_CMDSENT) ) {}
+	uint32_t timeout = 0;
+	while ( (! (SDMMC1->STA & SDMMC_STA_CMDSENT)) || timeout >= TIMEOUT_MAX )
+	{
+		timeout++;
+	}
 
 	SDMMC1->ICR &= ~(SDMMC_ICR_CCRCFAILC | SDMMC_ICR_CTIMEOUTC | SDMMC_ICR_CMDRENDC | SDMMC_ICR_CMDSENTC | SDMMC_ICR_BUSYD0ENDC);
 }
 
 static void waitForResponseAndClearFlags()
 {
+	uint32_t timeout = 0;
 	while ( (SDMMC1->STA & (SDMMC_STA_CCRCFAIL | SDMMC_STA_CMDREND | SDMMC_STA_CTIMEOUT | SDMMC_STA_BUSYD0END)) == 0
-		|| (SDMMC1->STA & (SDMMC_STA_CPSMACT)) != 0 ) {}
+		|| (SDMMC1->STA & (SDMMC_STA_CPSMACT)) != 0 || timeout >= TIMEOUT_MAX )
+	{
+		timeout++;
+	}
 
 	SDMMC1->ICR &= ~(SDMMC_ICR_CCRCFAILC | SDMMC_ICR_CTIMEOUTC | SDMMC_ICR_CMDRENDC | SDMMC_ICR_CMDSENTC | SDMMC_ICR_BUSYD0ENDC);
 }
 
-void LLPD::sdmmc_init (const GPIO_PORT& cardDetectPort, const GPIO_PIN& cardDetectPin, const unsigned int pll2rClkRate, const unsigned int targetSDMMCClkRate,
+bool LLPD::sdmmc_init (const GPIO_PORT& cardDetectPort, const GPIO_PIN& cardDetectPin, const unsigned int pll2rClkRate, const unsigned int targetSDMMCClkRate,
 			const SDMMC_DIRPOL& dirPol, const SDMMC_BUS_WIDTH& busWidth, const bool hardwareFlowCtrl, const bool powerSave,
 			const SDMMC_CLK_EDGE& clkEdge)
 {
@@ -107,89 +121,91 @@ void LLPD::sdmmc_init (const GPIO_PORT& cardDetectPort, const GPIO_PIN& cardDete
 	sendCommand( 0, SDMMC_CMD_GO_IDLE_STATE );
 	waitForCmdSentAndClearFlags();
 
-	// send cmd8: send if cond (only available on version 2 cards, so checking if this card is a version 2 card)
-	bool isVersion2Card = true;
-	uint32_t cmd8Arg = 0;
-	cmd8Arg |= 0x1 << 8; // supply voltage (2.7-3.6 V)
-	cmd8Arg |= 0xAA; // recommended check pattern
-	// cmd8Arg should be 426, cmdIndex should be 8, response should be 256, cpsm should be 4096
-	// ARG ends up being 426
-	// tmpreg ends up being 4360
-	// CMD ends up being 264
-	// RESPCMD ends up being 8
-	// RESP1 ends up being 426
-	// STA ends up being 64
-	sendCommand( cmd8Arg, SDMMC_CMD_SEND_IF_COND, SDMMC_CMD_SHORT_RESPONSE );
-
-	// wait for response or failure and then clear flags
-	while ( (SDMMC1->STA & (SDMMC_STA_CCRCFAIL | SDMMC_STA_CMDREND | SDMMC_STA_CTIMEOUT)) == 0
-			|| (SDMMC1->STA & (SDMMC_STA_CPSMACT)) != 0 ) {}
-	if ( SDMMC1->STA & SDMMC_STA_CTIMEOUT )
+	// send cmd8: send if cond (only responds if version 2 card, so checking if this card is a version 2 card)
+	unsigned int version2Trials = 0;
+	constexpr uint8_t MAX_VERSION2_TRIALS = 10;
+	for ( version2Trials = 0; version2Trials < MAX_VERSION2_TRIALS; version2Trials++ )
 	{
-		// no response, so card is not version 2
-		isVersion2Card = false;
-	}
-	if ( SDMMC1->STA & SDMMC_STA_CCRCFAIL )
-	{
-		// ccrc failure, so card is not version 2
-		isVersion2Card = false;
-	}
-	clearFlags();
+		uint32_t cmd8Arg = 0;
+		cmd8Arg |= 0x1 << 8; // supply voltage (2.7-3.6 V)
+		cmd8Arg |= 0xAA; // recommended check pattern
 
-	bool isHighCapacityCard = false;
-
-	// if we don't have a version 2 card, send cmd0: go idle state command again
-	// TODO version 1 card support may need work
-	if ( ! isVersion2Card )
-	{
-		sendCommand( 0, SDMMC_CMD_GO_IDLE_STATE );
-		waitForCmdSentAndClearFlags();
-
-		// send cmd1: bring out of idle state
-		sendCommand( 0, SDMMC_CMD_SEND_OP_COND );
+		sendCommand( cmd8Arg, SDMMC_CMD_SEND_IF_COND, SDMMC_CMD_SHORT_RESPONSE );
 
 		// wait for response or failure and then clear flags
-		while ( (SDMMC1->STA & (SDMMC_STA_CCRCFAIL | SDMMC_STA_CMDREND | SDMMC_STA_CTIMEOUT | SDMMC_STA_BUSYD0END)) == 0
-				|| (SDMMC1->STA & (SDMMC_STA_CPSMACT)) != 0 ) {}
+		uint32_t timeout = 0;
+		while ( (SDMMC1->STA & (SDMMC_STA_CCRCFAIL | SDMMC_STA_CMDREND | SDMMC_STA_CTIMEOUT)) == 0
+				|| (SDMMC1->STA & (SDMMC_STA_CPSMACT)) != 0 || timeout >= TIMEOUT_MAX )
+		{
+			timeout++;
+		}
+
+		bool shouldBreak = timeout < TIMEOUT_MAX;
+
 		if ( SDMMC1->STA & SDMMC_STA_CTIMEOUT )
 		{
-			while ( true ) {}
+			// no response, so card is not version 2
+			isVersion2Card = false;
+			shouldBreak = true;
 		}
 		if ( SDMMC1->STA & SDMMC_STA_CCRCFAIL )
 		{
-			while ( true ) {}
+			// ccrc failure, so card is not version 2
+			isVersion2Card = false;
+			shouldBreak = true;
 		}
 		clearFlags();
+
+		if ( shouldBreak )
+		{
+			break;
+		}
 	}
-	else // card is version 2 card
+
+	// if we didn't get a response at all, we probably don't have an sd card connected so we fail
+	if ( version2Trials >= MAX_VERSION2_TRIALS )
 	{
-		uint32_t response = 0;
-		while ( response & SDMMC_R1_IDLE_STATE )
+		return false;
+	}
+
+	uint32_t response = 0;
+	uint32_t timeout = 0;
+	while ( ((response & SDMMC_ACMD41_BUSY) == 0) && (timeout < TIMEOUT_MAX) )
+	{
+		// send cmd55: app command with rca as 0
+		sendCommand( 0, SDMMC_CMD_APP_CMD, SDMMC_CMD_SHORT_RESPONSE );
+		waitForResponseAndClearFlags();
+
+		// check to ensure command response matches
+		if ( SDMMC1->RESPCMD != SDMMC_CMD_APP_CMD )
 		{
-			// send cmd55: app command with rca as 0
-			sendCommand( 0, SDMMC_CMD_APP_CMD, SDMMC_CMD_SHORT_RESPONSE );
-			waitForResponseAndClearFlags();
-
-			// check to ensure command response matches
-			if ( SDMMC1->RESPCMD != SDMMC_CMD_APP_CMD )
-			{
-				// this card is unsupported
-				while ( true ) {}
-			}
-
-			// send acmd41: exit idle state and check if high capacity card
-			sendCommand( SDMMC_ACMD41_HIGH_CAPACITY, SDMMC_ACMD_SD_SEND_OP_COND, SDMMC_CMD_SHORT_RESPONSE );
-			waitForResponseAndClearFlags();
-
-			response = SDMMC1->RESP1;
+			// this card is unsupported
+			return false;
 		}
 
-		// TODO need to work on this
-		if ( (response & SDMMC_ACMD41_HIGH_CAPACITY) == SDMMC_ACMD41_HIGH_CAPACITY )
-		{
-			isHighCapacityCard = true;
-		}
+		// send acmd41: exit idle state and check if high capacity card
+		sendCommand( SDMMC_ACMD41_BUSY | SDMMC_ACMD41_HIGH_CAPACITY | SDMMC_ACMD41_VOLTAGE_WINDOW,
+				SDMMC_ACMD_SD_SEND_OP_COND, SDMMC_CMD_SHORT_RESPONSE );
+		waitForResponseAndClearFlags();
+
+		response = SDMMC1->RESP1;
+
+		timeout++;
+	}
+
+	// unable to complete voltage trials
+	if ( timeout >= TIMEOUT_MAX )
+	{
+		return false;
+	}
+
+	if ( response & SDMMC_ACMD41_HIGH_CAPACITY )
+	{
+		// not currently supporting high capacity cards
+		return false;
 	}
 
 	// target sdmmc clk div will be ceil( pllclk / (targetSDMMCClkRate probably times 2???) )
+
+	return true;
 }
