@@ -477,7 +477,7 @@ class LLPD
 		static void ltdc_layer_set_fb_addr (const LTDC_LAYER& layer, uint32_t fbStartAddress); // actual change happens on vertical blanking
 
 		// SDMMC (SDMMC1, d0 = c8, d1 = c9, d2 = c10, d3 = c11, clk = c12, cmd = d2)
-		// not currently supporting high capacity cards or 1.8V signals
+		// not currently supporting high capacity cards, secured cards, or 1.8V signals
 		static bool sdmmc_init (const GPIO_PORT& cardDetectPort, const GPIO_PIN& cardDetectPin, const unsigned int pll2rClkRate,
 					const unsigned int targetSDMMCClkRate, const SDMMC_DIRPOL& dirPol, const SDMMC_BUS_WIDTH& busWidth,
 					const bool hardwareFlowCtrl, const bool powerSave, const SDMMC_CLK_EDGE& clkEdge ); // returns false if failed
