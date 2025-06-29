@@ -1,15 +1,21 @@
 #include "LLPD.hpp"
 
+#include <cmath>
+
 // commands
 static constexpr uint32_t SDMMC_CMD_GO_IDLE_STATE = 0;
 static constexpr uint32_t SDMMC_CMD_SEND_OP_COND = 1;
 static constexpr uint32_t SDMMC_CMD_ALL_SEND_CID = 2;
 static constexpr uint32_t SDMMC_CMD_SEND_RELATIVE_ADDR = 3;
+static constexpr uint32_t SDMMC_ACMD_SET_BUS_WIDTH = 6;
 static constexpr uint32_t SDMMC_CMD_SELECT_DESELECT_CARD = 7;
 static constexpr uint32_t SDMMC_CMD_SEND_IF_COND = 8;
 static constexpr uint32_t SDMMC_CMD_SEND_CSD = 9;
-static constexpr uint32_t SDMMC_CMD_APP_CMD = 55;
+static constexpr uint32_t SDMMC_CMD_SEND_STATUS = 13;
+static constexpr uint32_t SDMMC_CMD_SET_BLOCKLEN = 16;
 static constexpr uint32_t SDMMC_ACMD_SD_SEND_OP_COND = 41;
+static constexpr uint32_t SDMMC_ACMD_SEND_SCR = 51;
+static constexpr uint32_t SDMMC_CMD_APP_CMD = 55;
 
 // wait response values
 static constexpr uint32_t SDMMC_CMD_NO_RESPONSE = 0b00;
@@ -24,14 +30,35 @@ static constexpr uint32_t SDMMC_ACMD41_HIGH_CAPACITY = 0x40000000;
 // r1 response masks
 static constexpr uint32_t SDMMC_R1_IDLE_STATE = 0b00000001;
 
+// block sizes
+static constexpr uint32_t SDMMC_DATABLOCK_SIZE_1BYTES = 0b0000;
+static constexpr uint32_t SDMMC_DATABLOCK_SIZE_2BYTES = 0b0001;
+static constexpr uint32_t SDMMC_DATABLOCK_SIZE_4BYTES = 0b0010;
+static constexpr uint32_t SDMMC_DATABLOCK_SIZE_8BYTES = 0b0011;
+static constexpr uint32_t SDMMC_DATABLOCK_SIZE_16BYTES = 0b0100;
+static constexpr uint32_t SDMMC_DATABLOCK_SIZE_32BYTES = 0b0101;
+static constexpr uint32_t SDMMC_DATABLOCK_SIZE_64BYTES = 0b0110;
+static constexpr uint32_t SDMMC_DATABLOCK_SIZE_128BYTES = 0b0111;
+static constexpr uint32_t SDMMC_DATABLOCK_SIZE_256BYTES = 0b1000;
+static constexpr uint32_t SDMMC_DATABLOCK_SIZE_512BYTES = 0b1001;
+
+// scr values
+static constexpr uint32_t SDMMC_4BIT_BUS_SUPPORT = 0x00040000;
+
+// data timeout (dtimer reg val)
+static constexpr uint32_t SDMMC_TIMEOUT = 0xFFFFFFFF;
+
+// card detection port and pin
 static constexpr GPIO_PORT cDPort = GPIO_PORT::A;
 static constexpr GPIO_PIN cDPin = GPIO_PIN::PIN_4;
 
-static constexpr uint32_t TIMEOUT_MAX = 10000;
+// user defined timeout
+static constexpr uint32_t TIMEOUT_MAX = 100000;
 
 static uint32_t cid[4] = { 0, 0, 0, 0 };
 static uint32_t rca = 0; // the real rca is only the last 16 bits, but since it's used in the argument for some commands, leave as-is
 static uint32_t csd[4] = { 0, 0, 0, 0 };
+static uint32_t scr[2] = { 0, 0 };
 static bool isVersion2Card = true;
 
 static void sendCommand (const uint32_t arg, const uint32_t cmdIndex, const uint32_t response = SDMMC_CMD_NO_RESPONSE,
@@ -52,9 +79,9 @@ static void sendCommand (const uint32_t arg, const uint32_t cmdIndex, const uint
 	SDMMC1->CMD = cmdRegVal;
 }
 
-static void clearFlags()
+static void clearCmdFlags()
 {
-	SDMMC1->ICR &= ~(SDMMC_ICR_CCRCFAILC | SDMMC_ICR_CTIMEOUTC | SDMMC_ICR_CMDRENDC | SDMMC_ICR_CMDSENTC | SDMMC_ICR_BUSYD0ENDC);
+	SDMMC1->ICR |= SDMMC_ICR_CCRCFAILC | SDMMC_ICR_CTIMEOUTC | SDMMC_ICR_CMDRENDC | SDMMC_ICR_CMDSENTC | SDMMC_ICR_BUSYD0ENDC;
 }
 
 static bool waitForCmdSentAndClearFlags()
@@ -65,9 +92,14 @@ static bool waitForCmdSentAndClearFlags()
 		timeout++;
 	}
 
-	SDMMC1->ICR &= ~(SDMMC_ICR_CCRCFAILC | SDMMC_ICR_CTIMEOUTC | SDMMC_ICR_CMDRENDC | SDMMC_ICR_CMDSENTC | SDMMC_ICR_BUSYD0ENDC);
+	const uint32_t tempSTA = SDMMC1->STA;
+	clearCmdFlags();
 
-	if ( timeout >= TIMEOUT_MAX )
+	if ( (tempSTA & SDMMC_ICR_CTIMEOUTC) != 0 )
+	{
+		return false;
+	}
+	else if ( timeout >= TIMEOUT_MAX )
 	{
 		return false;
 	}
@@ -84,9 +116,51 @@ static bool waitForResponseAndClearFlags()
 		timeout++;
 	}
 
-	SDMMC1->ICR &= ~(SDMMC_ICR_CCRCFAILC | SDMMC_ICR_CTIMEOUTC | SDMMC_ICR_CMDRENDC | SDMMC_ICR_CMDSENTC | SDMMC_ICR_BUSYD0ENDC);
+	const uint32_t tempSTA = SDMMC1->STA;
+	clearCmdFlags();
 
-	if ( timeout >= TIMEOUT_MAX )
+	if ( (tempSTA & SDMMC_ICR_CTIMEOUTC) != 0 )
+	{
+		return false;
+	}
+	else if ( timeout >= TIMEOUT_MAX )
+	{
+		return false;
+	}
+
+	return true;
+}
+
+static bool waitForSCRDataResponseAndClearFlags (uint32_t* dataPtr, unsigned int dataSize)
+{
+	uint32_t timeout = 0;
+	uint32_t numDataReceived = 0;
+	uint32_t tempSTA = SDMMC1->STA;
+	while ( ((tempSTA & (SDMMC_STA_RXOVERR | SDMMC_STA_DCRCFAIL | SDMMC_STA_DTIMEOUT | SDMMC_STA_DBCKEND | SDMMC_STA_DATAEND) == 0)
+			&& timeout < TIMEOUT_MAX)
+			|| (numDataReceived < dataSize) )
+	{
+		if ( ((tempSTA & SDMMC_STA_RXFIFOE) == 0) && numDataReceived < dataSize )
+		{
+			*dataPtr = SDMMC1->FIFO;
+			numDataReceived++;
+			dataPtr++;
+			*dataPtr = SDMMC1->FIFO;
+			numDataReceived++;
+		}
+
+		timeout++;
+		tempSTA = SDMMC1->STA;
+	}
+
+	tempSTA = SDMMC1->STA;
+	SDMMC1->ICR |= SDMMC_ICR_RXOVERRC | SDMMC_ICR_DCRCFAILC | SDMMC_ICR_DTIMEOUTC | SDMMC_ICR_DBCKENDC | SDMMC_ICR_DATAENDC;
+
+	if ( (tempSTA & (SDMMC_ICR_RXOVERRC | SDMMC_ICR_DCRCFAILC | SDMMC_ICR_DTIMEOUTC)) != 0 )
+	{
+		return false;
+	}
+	else if ( timeout >= TIMEOUT_MAX )
 	{
 		return false;
 	}
@@ -95,8 +169,7 @@ static bool waitForResponseAndClearFlags()
 }
 
 bool LLPD::sdmmc_init (const GPIO_PORT& cardDetectPort, const GPIO_PIN& cardDetectPin, const unsigned int pll2rClkRate, const unsigned int targetSDMMCClkRate,
-			const SDMMC_DIRPOL& dirPol, const SDMMC_BUS_WIDTH& busWidth, const bool hardwareFlowCtrl, const bool powerSave,
-			const SDMMC_CLK_EDGE& clkEdge)
+			const SDMMC_BUS_WIDTH& busWidth, const bool hardwareFlowCtrl, const bool powerSave, const SDMMC_CLK_EDGE& clkEdge)
 {
 	// start sdmmc1 clock
 	RCC->AHB3ENR |= RCC_AHB3ENR_SDMMC1EN;
@@ -181,7 +254,7 @@ bool LLPD::sdmmc_init (const GPIO_PORT& cardDetectPort, const GPIO_PIN& cardDete
 			isVersion2Card = false;
 			shouldBreak = true;
 		}
-		clearFlags();
+		clearCmdFlags();
 
 		if ( shouldBreak )
 		{
@@ -283,7 +356,117 @@ bool LLPD::sdmmc_init (const GPIO_PORT& cardDetectPort, const GPIO_PIN& cardDete
 		return false;
 	}
 
-	// target sdmmc clk div will be ceil( pllclk / (targetSDMMCClkRate probably times 2???) )
+	// TODO here we should get the card status with acmd13 to figure out speed grade and stuff, but
+	// since we already know the type of card fuck it
+
+	// send cmd16: set block length (in preparation to get scr)
+	constexpr uint32_t scrBlockLen = 8;
+	sendCommand( scrBlockLen, SDMMC_CMD_SET_BLOCKLEN, SDMMC_CMD_SHORT_RESPONSE );
+	if ( ! waitForResponseAndClearFlags() )
+	{
+		return false;
+	}
+	// send cmd55: app command with rca (in preparation to get scr)
+	sendCommand( rca, SDMMC_CMD_APP_CMD, SDMMC_CMD_SHORT_RESPONSE );
+	if ( ! waitForResponseAndClearFlags() )
+	{
+		return false;
+	}
+
+	// set the data timeout value
+	SDMMC1->DTIMER = SDMMC_TIMEOUT;
+
+	// set the data length
+	SDMMC1->DLEN = scrBlockLen;
+
+	// set the dctrl values
+	uint32_t tmpRegVal = SDMMC1->DCTRL;
+	tmpRegVal &= ~(SDMMC_DCTRL_DTEN | SDMMC_DCTRL_DTDIR | SDMMC_DCTRL_DTMODE | SDMMC_DCTRL_DBLOCKSIZE);
+	tmpRegVal |= SDMMC_DATABLOCK_SIZE_8BYTES << SDMMC_DCTRL_DBLOCKSIZE_Pos;
+	tmpRegVal |= SDMMC_DCTRL_DTDIR; // direction to host
+	tmpRegVal |= SDMMC_DCTRL_DTEN;
+	SDMMC1->DCTRL = tmpRegVal;
+
+	// send acmd51: request card to send scr
+	sendCommand( 0, SDMMC_ACMD_SEND_SCR, SDMMC_CMD_SHORT_RESPONSE );
+	if ( ! waitForResponseAndClearFlags() )
+	{
+		return false;
+	}
+
+	// get scr data
+	if ( ! waitForSCRDataResponseAndClearFlags(scr, 2) )
+	{
+		return false;
+	}
+
+	uint32_t tempSCR0 = scr[0];
+	uint32_t tempSCR1 = scr[1];
+
+	// we need to change the byte ordering of the scr values
+	scr[0] = ((tempSCR1 & 0xFF) << 24) | ((tempSCR1 & 0xFF00) << 8) | ((tempSCR1 & 0xFF0000) >> 8) | ((tempSCR1 & 0xFF000000) >> 24);
+	scr[1] = ((tempSCR0 & 0xFF) << 24) | ((tempSCR0 & 0xFF00) << 8) | ((tempSCR0 & 0xFF0000) >> 8) | ((tempSCR0 & 0xFF000000) >> 24);
+
+	// ensure we support 4-bit bus
+	if ( (scr[1] & SDMMC_4BIT_BUS_SUPPORT) == 0 )
+	{
+		return false;
+	}
+
+	// send cmd55: app command with rca (in preparation to set bus width)
+	sendCommand( rca, SDMMC_CMD_APP_CMD, SDMMC_CMD_SHORT_RESPONSE );
+	if ( ! waitForResponseAndClearFlags() )
+	{
+		return false;
+	}
+
+	// send acmd6: set bus width
+	sendCommand( 2, SDMMC_ACMD_SET_BUS_WIDTH, SDMMC_CMD_SHORT_RESPONSE ); // argument 2 sets to 4-bit wide bus
+	if ( ! waitForResponseAndClearFlags() )
+	{
+		return false;
+	}
+
+	// configure sdmmc peripheral to desired parameters
+	uint32_t targetSDMMCClkDiv = std::ceil( static_cast<float>(pll2rClkRate) / (2.0f * static_cast<float>(targetSDMMCClkRate)) );
+	tmpRegVal = SDMMC1->CLKCR;
+	tmpRegVal &= ~(SDMMC_CLKCR_CLKDIV | SDMMC_CLKCR_PWRSAV | SDMMC_CLKCR_WIDBUS | SDMMC_CLKCR_NEGEDGE | SDMMC_CLKCR_HWFC_EN
+			| SDMMC_CLKCR_DDR | SDMMC_CLKCR_BUSSPEED | SDMMC_CLKCR_SELCLKRX);
+	tmpRegVal |= static_cast<uint32_t>(clkEdge) << SDMMC_CLKCR_NEGEDGE_Pos;
+	tmpRegVal |= ((powerSave) ? 1 : 0) << SDMMC_CLKCR_PWRSAV_Pos;
+	tmpRegVal |= static_cast<uint32_t>(busWidth) << SDMMC_CLKCR_WIDBUS_Pos;
+	tmpRegVal |= ((hardwareFlowCtrl) ? 1 : 0) << SDMMC_CLKCR_HWFC_EN_Pos;
+	tmpRegVal |= targetSDMMCClkDiv << SDMMC_CLKCR_CLKDIV_Pos;
+
+	SDMMC1->CLKCR = tmpRegVal;
+
+	// send cmd16: set block length to 512
+	sendCommand( 512, SDMMC_CMD_SET_BLOCKLEN, SDMMC_CMD_SHORT_RESPONSE );
+	if ( ! waitForResponseAndClearFlags() )
+	{
+		return false;
+	}
+
+	// ensure the card is in the transfer state, meaning it's ready to send/receive
+	uint8_t cardState = 0;
+	timeout = 0;
+	while ( (cardState != 0x04) & (timeout < TIMEOUT_MAX) )
+	{
+		// send cmd13: request card status
+		sendCommand( rca, SDMMC_CMD_SEND_STATUS, SDMMC_CMD_SHORT_RESPONSE );
+		if ( ! waitForResponseAndClearFlags() )
+		{
+			return false;
+		}
+
+		cardState = SDMMC1->RESP1 >> 9;
+		timeout++;
+	}
+
+	if ( timeout > TIMEOUT_MAX )
+	{
+		return false;
+	}
 
 	return true;
 }
