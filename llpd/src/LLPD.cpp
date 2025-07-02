@@ -43,3 +43,58 @@ extern "C" void Custom_Reset_Handler(void)
 	// dma may still be running from the last reset
 	LLPD::dac_dma_stop();
 }
+
+// sdmmc1 dma handling
+extern "C" void SDMMC1_IRQHandler (void)
+{
+	if ( SDMMC1->STA & SDMMC_STA_DATAEND )
+	{
+		// clear data flags
+		sdmmcClearDataFlags();
+
+		// disable interrupts
+		SDMMC1->MASK &= ~( SDMMC_MASK_DCRCFAILIE | SDMMC_MASK_DTIMEOUTIE | SDMMC_MASK_TXUNDERRIE | SDMMC_MASK_DATAENDIE
+					| SDMMC_MASK_RXOVERRIE );
+
+		// disable data transfer command
+		SDMMC1->CMD &= ~(SDMMC_CMD_CMDTRANS);
+
+		// reset registers
+		SDMMC1->DLEN = 0;
+		SDMMC1->DCTRL = 0;
+		SDMMC1->IDMACTRL = 0;
+
+		if ( sdmmcMultiBlockTransfer )
+		{
+			// enable command stop
+			SDMMC1->CMD |= SDMMC_CMD_CMDSTOP;
+
+			// send cmd12: stop transmission
+			sendCommand( 0, SDMMC_CMD_STOP_TRANSMISSION, SDMMC_CMD_SHORT_RESPONSE );
+			if ( ! waitForResponseAndClearFlags() )
+			{
+				sdmmcTransferError = true;
+			}
+
+			// disable command stop
+			SDMMC1->CMD &= ~(SDMMC_CMD_CMDSTOP);
+		}
+
+		sdmmcTransferCompleted = true;
+		sdmmcMultiBlockTransfer = false;
+	}
+	else if ( SDMMC1->STA & (SDMMC_STA_DCRCFAIL | SDMMC_STA_DTIMEOUT | SDMMC_STA_TXUNDERR | SDMMC_STA_RXOVERR) )
+	{
+		sdmmcTransferError = true;
+		sdmmcTransferErrorStaRegVal = SDMMC1->STA;
+
+		sdmmcClearDataFlags();
+
+		// disable interrupts
+		SDMMC1->MASK &= ~( SDMMC_MASK_DCRCFAILIE | SDMMC_MASK_DTIMEOUTIE | SDMMC_MASK_TXUNDERRIE | SDMMC_MASK_DATAENDIE
+					| SDMMC_MASK_RXOVERRIE );
+
+		sdmmcTransferCompleted = true;
+		sdmmcMultiBlockTransfer = false;
+	}
+}

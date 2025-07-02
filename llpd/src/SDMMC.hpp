@@ -11,8 +11,16 @@ static constexpr uint32_t SDMMC_ACMD_SET_BUS_WIDTH = 6;
 static constexpr uint32_t SDMMC_CMD_SELECT_DESELECT_CARD = 7;
 static constexpr uint32_t SDMMC_CMD_SEND_IF_COND = 8;
 static constexpr uint32_t SDMMC_CMD_SEND_CSD = 9;
+static constexpr uint32_t SDMMC_CMD_STOP_TRANSMISSION = 12;
 static constexpr uint32_t SDMMC_CMD_SEND_STATUS = 13;
 static constexpr uint32_t SDMMC_CMD_SET_BLOCKLEN = 16;
+static constexpr uint32_t SDMMC_CMD_READ_SINGLE_BLOCK = 17;
+static constexpr uint32_t SDMMC_CMD_READ_MULTIPLE_BLOCK = 18;
+static constexpr uint32_t SDMMC_CMD_WRITE_SINGLE_BLOCK = 24;
+static constexpr uint32_t SDMMC_CMD_WRITE_MULTIPLE_BLOCK = 25;
+static constexpr uint32_t SDMMC_CMD_ERASE_WR_BLK_START_ADDR = 32;
+static constexpr uint32_t SDMMC_CMD_ERASE_WR_BLK_END_ADDR = 33;
+static constexpr uint32_t SDMMC_CMD_ERASE = 38;
 static constexpr uint32_t SDMMC_ACMD_SD_SEND_OP_COND = 41;
 static constexpr uint32_t SDMMC_ACMD_SEND_SCR = 51;
 static constexpr uint32_t SDMMC_CMD_APP_CMD = 55;
@@ -25,7 +33,10 @@ static constexpr uint32_t SDMMC_CMD_LONG_RESPONSE = 0b11;
 // acmd41 queries
 static constexpr uint32_t SDMMC_ACMD41_BUSY = 0x80000000;
 static constexpr uint32_t SDMMC_ACMD41_VOLTAGE_WINDOW = 0x100000; // 3.2V - 3.3V
-static constexpr uint32_t SDMMC_ACMD41_HIGH_CAPACITY = 0x40000000;
+static constexpr uint32_t SDMMC_ACMD41_HIGH_CAPACITY = 0x80000000; // support sdhc/sdxc
+
+// acmd41 response masks
+static constexpr uint32_t SDMMC_ACMD41_SDHC_SDXC_CARD = 0b10;
 
 // r1 response masks
 static constexpr uint32_t SDMMC_R1_IDLE_STATE = 0b00000001;
@@ -55,11 +66,19 @@ static constexpr GPIO_PIN cDPin = GPIO_PIN::PIN_4;
 // user defined timeout
 static constexpr uint32_t TIMEOUT_MAX = 100000;
 
+// data block size (only allowing 512 for transfers)
+static constexpr uint32_t SDMMC_TRANSFER_BLOCK_SIZE = 512;
+
 static uint32_t cid[4] = { 0, 0, 0, 0 };
 static uint32_t rca = 0; // the real rca is only the last 16 bits, but since it's used in the argument for some commands, leave as-is
 static uint32_t csd[4] = { 0, 0, 0, 0 };
 static uint32_t scr[2] = { 0, 0 };
 static bool isVersion2Card = true;
+static bool isSdhcOrSdxcCard = false;
+volatile bool sdmmcTransferCompleted = true;
+volatile bool sdmmcMultiBlockTransfer = false;
+volatile bool sdmmcTransferError = false;
+volatile uint32_t sdmmcTransferErrorStaRegVal = 0;
 
 static void sendCommand (const uint32_t arg, const uint32_t cmdIndex, const uint32_t response = SDMMC_CMD_NO_RESPONSE,
 				const bool waitForInterrupt = false, const bool waitPend = false, const bool cpsmEnable = true,
@@ -82,6 +101,12 @@ static void sendCommand (const uint32_t arg, const uint32_t cmdIndex, const uint
 static void clearCmdFlags()
 {
 	SDMMC1->ICR |= SDMMC_ICR_CCRCFAILC | SDMMC_ICR_CTIMEOUTC | SDMMC_ICR_CMDRENDC | SDMMC_ICR_CMDSENTC | SDMMC_ICR_BUSYD0ENDC;
+}
+
+void sdmmcClearDataFlags()
+{
+	SDMMC1->ICR |= SDMMC_ICR_RXOVERRC | SDMMC_ICR_DCRCFAILC | SDMMC_ICR_DTIMEOUTC | SDMMC_ICR_DBCKENDC | SDMMC_ICR_DATAENDC
+			| SDMMC_ICR_DHOLDC | SDMMC_ICR_DABORTC | SDMMC_ICR_IDMATEC | SDMMC_ICR_IDMABTCC;
 }
 
 static bool waitForCmdSentAndClearFlags()
@@ -136,7 +161,7 @@ static bool waitForSCRDataResponseAndClearFlags (uint32_t* dataPtr, unsigned int
 	uint32_t timeout = 0;
 	uint32_t numDataReceived = 0;
 	uint32_t tempSTA = SDMMC1->STA;
-	while ( ((tempSTA & (SDMMC_STA_RXOVERR | SDMMC_STA_DCRCFAIL | SDMMC_STA_DTIMEOUT | SDMMC_STA_DBCKEND | SDMMC_STA_DATAEND) == 0)
+	while ( ((tempSTA & (SDMMC_STA_RXOVERR | SDMMC_STA_DCRCFAIL | SDMMC_STA_DTIMEOUT | SDMMC_STA_DBCKEND | SDMMC_STA_DATAEND)) == 0
 			&& timeout < TIMEOUT_MAX)
 			|| (numDataReceived < dataSize) )
 	{
@@ -154,13 +179,48 @@ static bool waitForSCRDataResponseAndClearFlags (uint32_t* dataPtr, unsigned int
 	}
 
 	tempSTA = SDMMC1->STA;
-	SDMMC1->ICR |= SDMMC_ICR_RXOVERRC | SDMMC_ICR_DCRCFAILC | SDMMC_ICR_DTIMEOUTC | SDMMC_ICR_DBCKENDC | SDMMC_ICR_DATAENDC;
+	sdmmcClearDataFlags();
 
 	if ( (tempSTA & (SDMMC_ICR_RXOVERRC | SDMMC_ICR_DCRCFAILC | SDMMC_ICR_DTIMEOUTC)) != 0 )
 	{
 		return false;
 	}
 	else if ( timeout >= TIMEOUT_MAX )
+	{
+		return false;
+	}
+
+	return true;
+}
+
+static bool waitForTransferState (uint32_t numBlocks, uint8_t* data = reinterpret_cast<uint8_t*>(1))
+{
+	if ( numBlocks == 0 || data == nullptr )
+
+	{
+		return false;
+	}
+
+	// wait until previous transfer is complete
+	while ( ! sdmmcTransferCompleted ) {}
+
+	// ensure the card is in the transfer state, meaning it's ready to send/receive
+	uint8_t cardState = 0;
+	uint32_t timeout = 0;
+	while ( (cardState != 0x04) & (timeout < TIMEOUT_MAX) )
+	{
+		// send cmd13: request card status
+		sendCommand( rca, SDMMC_CMD_SEND_STATUS, SDMMC_CMD_SHORT_RESPONSE );
+		if ( ! waitForResponseAndClearFlags() )
+		{
+			return false;
+		}
+
+		cardState = SDMMC1->RESP1 >> 9;
+		timeout++;
+	}
+
+	if ( timeout > TIMEOUT_MAX )
 	{
 		return false;
 	}
@@ -305,9 +365,13 @@ bool LLPD::sdmmc_init (const GPIO_PORT& cardDetectPort, const GPIO_PIN& cardDete
 		return false;
 	}
 
-	if ( response & SDMMC_ACMD41_HIGH_CAPACITY )
+	if ( ((response >> 30) & 0b11) == SDMMC_ACMD41_SDHC_SDXC_CARD )
 	{
-		// not currently supporting high capacity cards
+		isSdhcOrSdxcCard = true;
+	}
+	else if ( ((response >> 30) & 0b11) == 0b11 || ((response >> 30) & 0b11) == 0b01 )
+	{
+		// not currently supporting cards over 2TB or cards that don't give this response
 		return false;
 	}
 
@@ -440,8 +504,8 @@ bool LLPD::sdmmc_init (const GPIO_PORT& cardDetectPort, const GPIO_PIN& cardDete
 
 	SDMMC1->CLKCR = tmpRegVal;
 
-	// send cmd16: set block length to 512
-	sendCommand( 512, SDMMC_CMD_SET_BLOCKLEN, SDMMC_CMD_SHORT_RESPONSE );
+	// send cmd16: set block length
+	sendCommand( SDMMC_TRANSFER_BLOCK_SIZE, SDMMC_CMD_SET_BLOCKLEN, SDMMC_CMD_SHORT_RESPONSE );
 	if ( ! waitForResponseAndClearFlags() )
 	{
 		return false;
@@ -469,4 +533,173 @@ bool LLPD::sdmmc_init (const GPIO_PORT& cardDetectPort, const GPIO_PIN& cardDete
 	}
 
 	return true;
+}
+
+bool LLPD::sdmmc_erase (uint32_t address, uint32_t numBlocks)
+{
+	if ( ! waitForTransferState(numBlocks) )
+	{
+		return false;
+	}
+
+	uint32_t endAddress = address + numBlocks;
+	if ( isSdhcOrSdxcCard )
+	{
+		address *= SDMMC_TRANSFER_BLOCK_SIZE;
+		endAddress *= SDMMC_TRANSFER_BLOCK_SIZE;
+	}
+
+	// send cmd32: set erase start block address
+	sendCommand( address, SDMMC_CMD_ERASE_WR_BLK_START_ADDR, SDMMC_CMD_SHORT_RESPONSE );
+	if ( ! waitForResponseAndClearFlags() )
+	{
+		return false;
+	}
+
+	// send cmd33: set erase end block address
+	sendCommand( endAddress, SDMMC_CMD_ERASE_WR_BLK_END_ADDR, SDMMC_CMD_SHORT_RESPONSE );
+	if ( ! waitForResponseAndClearFlags() )
+	{
+		return false;
+	}
+
+	// send cmd38: erase
+	sendCommand( 0, SDMMC_CMD_ERASE, SDMMC_CMD_SHORT_RESPONSE );
+	if ( ! waitForResponseAndClearFlags() )
+	{
+		return false;
+	}
+
+	return true;
+}
+
+bool LLPD::sdmmc_read_dma (uint32_t address, uint8_t* data, uint32_t numBlocks)
+{
+	if ( ! waitForTransferState(numBlocks, data) )
+	{
+		return false;
+	}
+
+	if ( isSdhcOrSdxcCard )
+	{
+		address *= SDMMC_TRANSFER_BLOCK_SIZE;
+	}
+
+	// reset dctrl register
+	SDMMC1->DCTRL = 0;
+
+	// set the data timeout value
+	SDMMC1->DTIMER = SDMMC_TIMEOUT;
+
+	// set data length
+	SDMMC1->DLEN = SDMMC_TRANSFER_BLOCK_SIZE * numBlocks;
+
+	// set dctrl register
+	SDMMC1->DCTRL = (SDMMC_DATABLOCK_SIZE_512BYTES << SDMMC_DCTRL_DBLOCKSIZE_Pos) | ( SDMMC_DCTRL_DTDIR );
+
+	// set data transfer command
+	SDMMC1->CMD |= SDMMC_CMD_CMDTRANS;
+
+	// setup idma
+	SDMMC1->IDMABASE0 = reinterpret_cast<uint32_t>( data );
+	SDMMC1->IDMACTRL = 1; // enable idma bit
+
+	// request data
+	if ( numBlocks > 1 )
+	{
+		// send cmd18: read multiple blocks
+		sendCommand( address, SDMMC_CMD_READ_MULTIPLE_BLOCK, SDMMC_CMD_SHORT_RESPONSE );
+		if ( ! waitForResponseAndClearFlags() )
+		{
+			return false;
+		}
+
+		sdmmcTransferCompleted = false;
+		sdmmcMultiBlockTransfer = true;
+	}
+	else
+	{
+		// send cmd17: read single block
+		sendCommand( address, SDMMC_CMD_READ_SINGLE_BLOCK, SDMMC_CMD_SHORT_RESPONSE );
+		if ( ! waitForResponseAndClearFlags() )
+		{
+			return false;
+		}
+
+		sdmmcTransferCompleted = false;
+	}
+
+	// enable interrupts
+	SDMMC1->MASK |= ( SDMMC_MASK_DCRCFAILIE | SDMMC_MASK_DTIMEOUTIE | SDMMC_MASK_RXOVERRIE | SDMMC_MASK_DATAENDIE );
+
+	return true;
+}
+
+bool LLPD::sdmmc_write_dma (uint32_t address, uint8_t* data, uint32_t numBlocks)
+{
+	if ( ! waitForTransferState(numBlocks, data) )
+	{
+		return false;
+	}
+
+	if ( isSdhcOrSdxcCard )
+	{
+		address *= SDMMC_TRANSFER_BLOCK_SIZE;
+	}
+
+	// reset dctrl register
+	SDMMC1->DCTRL = 0;
+
+	// set the data timeout value
+	SDMMC1->DTIMER = SDMMC_TIMEOUT;
+
+	// set data length
+	SDMMC1->DLEN = SDMMC_TRANSFER_BLOCK_SIZE * numBlocks;
+
+	// set dctrl register
+	SDMMC1->DCTRL = SDMMC_DATABLOCK_SIZE_512BYTES << SDMMC_DCTRL_DBLOCKSIZE_Pos;
+
+	// set data transfer command
+	SDMMC1->CMD |= SDMMC_CMD_CMDTRANS;
+
+	// setup idma
+	SDMMC1->IDMABASE0 = reinterpret_cast<uint32_t>( data );
+	SDMMC1->IDMACTRL = 1; // enable idma bit
+
+	// send data
+	if ( numBlocks > 1 )
+	{
+		// send cmd25: write multiple blocks
+		sendCommand( address, SDMMC_CMD_WRITE_MULTIPLE_BLOCK, SDMMC_CMD_SHORT_RESPONSE );
+		if ( ! waitForResponseAndClearFlags() )
+		{
+			return false;
+		}
+
+		sdmmcTransferCompleted = false;
+		sdmmcMultiBlockTransfer = true;
+	}
+	else
+	{
+		// send cmd24: write single block
+		sendCommand( address, SDMMC_CMD_WRITE_SINGLE_BLOCK, SDMMC_CMD_SHORT_RESPONSE );
+		if ( ! waitForResponseAndClearFlags() )
+		{
+			return false;
+		}
+
+		sdmmcTransferCompleted = false;
+	}
+
+	// enable interrupts
+	SDMMC1->MASK |= ( SDMMC_MASK_DCRCFAILIE | SDMMC_MASK_DTIMEOUTIE | SDMMC_MASK_TXUNDERRIE | SDMMC_MASK_DATAENDIE );
+
+	return true;
+}
+
+bool LLPD::sdmmc_has_transfer_error()
+{
+	while ( ! sdmmcTransferCompleted ) {}
+
+	return sdmmcTransferError;
 }
